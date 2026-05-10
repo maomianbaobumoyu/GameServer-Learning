@@ -1,0 +1,19 @@
+# 编译产物
+build/
+bin/
+*.o
+*.a
+*.so
+http_server
+
+# IDE配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 临时文件
+*.log
+*.tmp
+core.*
