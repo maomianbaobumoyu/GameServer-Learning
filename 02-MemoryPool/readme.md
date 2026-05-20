@@ -81,12 +81,15 @@ enum { _NFREELISTS = 16 };// 自由链表总数量
 
 ```bash
 memory_pool/
-├── build/                # 编译构建目录
-├── include/              # 头文件目录
+├── assets/               # 存放项目截图、演示图片等资源
+├── docs/                 # 存放详细原理笔记、学习文档
+│   └── SGI_study_note.md
+├── head/                 # 头文件目录
 │   └── myallocator.h     # 完整内存池源码
 ├── src/                  # 源文件目录
-│   └── main.cpp          # 测试运行代码
-└── CMakeLists.txt        # 编译配置文件
+│   └── testmyallocator.cpp  # 测试运行代码
+├── CMakeLists.txt        # 编译配置文件
+└── README.md             # 项目说明文档
 ```
 
 ## CMake 编译配置
