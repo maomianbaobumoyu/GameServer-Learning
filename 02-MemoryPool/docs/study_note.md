@@ -461,4 +461,4 @@ int main()
 
 ![img](../assets/vector测试.png)
 
-(该学习笔记已经同步到博客)
+(该学习笔记已经同步到博客 [6. STL 内存池原理与源码移植详解+测试-CSDN博客](https://blog.csdn.net/2302_78913144/article/details/161260984))
