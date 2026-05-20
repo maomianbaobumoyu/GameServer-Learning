@@ -39,8 +39,6 @@ SGI STL 是经典的内存池实现方案，采用**一级、二级双层空间�
 	static std::mutex mtx;
 ```
 
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
-
 ### 静态成员变量初始化
 
 ```cpp
@@ -60,8 +58,6 @@ template<typename T>
 typename myallcoator<T>::_Obj* volatile myallcoator<T>::_S_free_list[myallcoator<T>::_NFREELISTS] =
 { nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
 ```
-
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
 
 ## 二、核心内存分配 allocate 函数
 
@@ -99,8 +95,6 @@ typename myallcoator<T>::_Obj* volatile myallcoator<T>::_S_free_list[myallcoator
 	}
 ```
 
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
-
 ## 三、两大辅助推导函数
 
 ### 1. 内存对齐函数 _S_round_up
@@ -126,8 +120,6 @@ typename myallcoator<T>::_Obj* volatile myallcoator<T>::_S_free_list[myallcoator
 	}
 ```
 
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
-
 ## 四、内存释放 deallocate 函数
 
 内存释放逻辑区分两种场景：大于 128 字节的大块内存，直接调用底层`free`函数释放即可；小于等于 128 字节的小块内存，先定位到对应规格的自由链表，采用**链表头插**的方式，把使用完毕的内存块重新挂载回空闲链表中，等待下一次重复利用，同时全程加锁保证多线程释放安全。
@@ -152,8 +144,6 @@ typename myallcoator<T>::_Obj* volatile myallcoator<T>::_S_free_list[myallcoator
 		}
 	}
 ```
-
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
 
 ## 五、内存重分配 reallocate 函数
 
@@ -182,8 +172,6 @@ static void* reallocate(void* __p, size_t __old_sz, size_t __new_sz)
 }
 ```
 
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
-
 ## 六、对象构造与析构函数
 
 标准 STL 分配器中统一包含`allocate`、`deallocate`、`construct`、`destroy`四个核心方法，本代码将功能拆分实现，做到内存管理与对象生命周期管理分离。`construct`依靠定位`new`在已经分配好的内存地址上直接构造对象，全程不额外开辟新内存，内存分配工作全权交给`allocate`；`destroy`仅单纯调用对象自身析构函数销毁内部成员，不会释放底层内存空间，内存回收统一交由`deallocate`处理。
@@ -201,8 +189,6 @@ static void* reallocate(void* __p, size_t __old_sz, size_t __new_sz)
 		__p->~T();// 调用析构函数，不释放内存
 	}
 ```
-
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
 
 ## 七、自由链表填充 _S_refill 函数
 
@@ -255,8 +241,6 @@ static void* reallocate(void* __p, size_t __old_sz, size_t __new_sz)
 		return(__result);
 	}
 ```
-
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
 
 ## 八、内存池底层申请 _S_chunk_alloc 函数
 
@@ -333,8 +317,6 @@ static char* _S_chunk_alloc(size_t __size, int& __nobjs)
 	}
 }
 ```
-
-![点击并拖拽以移动](data:image/gif;base64,R0lGODlhAQABAPABAP///wAAACH5BAEKAAAALAAAAAABAAEAAAICRAEAOw==)
 
 ## 九、一级空间配置器整体逻辑
 
