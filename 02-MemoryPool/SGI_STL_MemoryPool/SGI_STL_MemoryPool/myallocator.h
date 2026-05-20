@@ -1,25 +1,119 @@
-#pragma once
+ï»¿#pragma once
 #include<mutex>
+#include<iostream>
+#include<cstdlib>   
+#include<cstring>   
+#include<new> 
 
-//¶àÏß³Ì-Ïß³Ì°²È«ÎÊÌâ
-//ÒÆÖ²SGI STL¶ş¼¶¿Õ¼äÅäÖÃÆ÷ÄÚ´æ³ØÔ´Âë Ä£°æÊµÏÖ
-//¿Õ¼äÅäÖÃÆ÷->ÈİÆ÷Ê¹ÓÃµÄ->ÈİÆ÷²úÉúµÄ¶ÔÏóºÜÓĞ¿ÉÄÜÔÚ¶à¸öÏß³ÌÖĞÈ¥²Ù×÷µÄ
+
+//å°è£…äº†mallocå’ŒFreeæ“ä½œï¼Œå¯ä»¥è®¾ç½®OOMé‡Šæ”¾å†…å­˜çš„å›è°ƒå‡½æ•°
+template <int __inst>
+class __malloc_alloc_template {
+
+private:
+
+	static void* _S_oom_malloc(size_t);
+	static void* _S_oom_realloc(void*, size_t);
+	static void (*__malloc_alloc_oom_handler)();
+public:
+
+	static void* allocate(size_t __n)
+	{
+		void* __result = malloc(__n);
+		if (0 == __result) __result = _S_oom_malloc(__n);
+		return __result;
+	}
+
+	static void deallocate(void* __p, size_t /* __n */)
+	{
+		free(__p);
+	}
+
+	static void* reallocate(void* __p, size_t /* old_sz */, size_t __new_sz)
+	{
+		void* __result = realloc(__p, __new_sz);
+		if (0 == __result) __result = _S_oom_realloc(__p, __new_sz);
+		return __result;
+	}
+
+	static void (*__set_malloc_handler(void (*__f)()))()
+	{
+		void (*__old)() = __malloc_alloc_oom_handler;
+		__malloc_alloc_oom_handler = __f;
+		return(__old);
+	}
+
+};
+
+template<int __inst>
+void (*__malloc_alloc_template<__inst>::__malloc_alloc_oom_handler)() = nullptr;
+
+//11
+template <int __inst>
+void*
+__malloc_alloc_template<__inst>::_S_oom_malloc(size_t __n)
+{
+	void (*__my_malloc_handler)();
+	void* __result;
+
+	for (;;) {
+		__my_malloc_handler = __malloc_alloc_oom_handler;
+		if (0 == __my_malloc_handler) { throw std::bad_alloc(); }
+		(*__my_malloc_handler)();
+		__result = malloc(__n);
+		if (__result) return(__result);
+	}
+}
+
+template <int __inst>
+void* __malloc_alloc_template<__inst>::_S_oom_realloc(void* __p, size_t __n)
+{
+	void (*__my_malloc_handler)();
+	void* __result;
+
+	for (;;) {
+		__my_malloc_handler = __malloc_alloc_oom_handler;
+		if (0 == __my_malloc_handler) { throw std::bad_alloc(); }
+		(*__my_malloc_handler)();
+		__result = realloc(__p, __n);
+		if (__result) return(__result);
+	}
+}
+
+typedef __malloc_alloc_template<0> malloc_alloc;
+
+//å¤šçº¿ç¨‹-çº¿ç¨‹å®‰å…¨é—®é¢˜
+//ç§»æ¤SGI STLäºŒçº§ç©ºé—´é…ç½®å™¨å†…å­˜æ± æºç  æ¨¡ç‰ˆå®ç°
+//ç©ºé—´é…ç½®å™¨->å®¹å™¨ä½¿ç”¨çš„->å®¹å™¨äº§ç”Ÿçš„å¯¹è±¡å¾ˆæœ‰å¯èƒ½åœ¨å¤šä¸ªçº¿ç¨‹ä¸­å»æ“ä½œçš„
 
 template<typename T>
 class myallcoator
 {
 public:
-	//¿ª±ÙÄÚ´æ
-	T* allcoate(size_t __n)
+	using value_type = T;
+
+	constexpr myallcoator() noexcept
 	{
+	}
+
+	constexpr myallcoator(const myallcoator&) noexcept = default;
+	template<class _Other>
+	constexpr myallcoator(const myallcoator<_Other>&) noexcept
+	{
+	}
+	//å¼€è¾Ÿå†…å­˜  
+	T* allocate(size_t __n)//C++ä¸­çš„stlå®¹å™¨ä¼ çš„æ˜¯å…ƒç´ çš„ä¸ªæ•°
+	{
+		__n = __n * sizeof(T);//ä½†æˆ‘ä»¬éœ€è¦å®é™…å…ƒç´ çš„å¤§å°ï¼Œæ‰€ä»¥è¿›è¡Œå¤„ç†
+
 		void* __ret = 0;
-		if (__n > (size_t)_MAX_BYTES) {//·ÖÅä´ó¿éÄÚ´æ
+		if (__n > (size_t)_MAX_BYTES) {//åˆ†é…å¤§å—å†…å­˜
 			__ret = malloc_alloc::allocate(__n);
 		}
-		else {//Ğ¡¿éÄÚ´æ£¬ÏÈ¶¨Î»×ÔÓÉÁ´±íÀïµÄÎ»ÖÃ
+		else {//å°å—å†…å­˜ï¼Œå…ˆå®šä½è‡ªç”±é“¾è¡¨é‡Œçš„ä½ç½®
 			_Obj* volatile* __my_free_list = _S_free_list + _S_freelist_index(__n);
-		
-			std::lock_guard<std::mutex> guard(mtx);//ÉÏËø
+
+			std::lock_guard<std::mutex> guard(mtx);//ä¸Šé”
 
 			_Obj* __result = *__my_free_list;
 			if (__result == 0) __ret = _S_refill(_S_round_up(__n));
@@ -28,13 +122,12 @@ public:
 				__ret = __result;
 			}
 		}
-
-		return __ret;
-	} 
-
+		return (T*)__ret;
+	}
 
 
-	//ÊÍ·ÅÄÚ´æ
+
+	//é‡Šæ”¾å†…å­˜
 	void deallocate(void* __p, size_t __n)
 	{
 		if (__n > (size_t)_MAX_BYTES) malloc_alloc::deallocate(__p, __n);
@@ -48,88 +141,93 @@ public:
 		}
 	}
 
-	//ÄÚ´æÀ©Èİ&ËõÈİ
+	//å†…å­˜æ‰©å®¹&ç¼©å®¹
 	static void* reallocate(void* __p, size_t __old_sz, size_t __new_sz)
 	{
 		void* __result;
 		size_t __copy_sz;
-		if (__old_sz > (size_t)__MAX_BYTES && __new_sz > (size_t)_MAX_BYTES) {
+		// ã€ä¿®æ­£ã€‘__MAX_BYTES â†’ _MAX_BYTES (ç¬”è¯¯å¤šäº†ä¸‹åˆ’çº¿)
+		if (__old_sz > (size_t)_MAX_BYTES && __new_sz > (size_t)_MAX_BYTES) {
 			return(realloc(__p, __new_sz));
 		}
 		if (__old_sz > (size_t)_MAX_BYTES && __new_sz > (size_t)_MAX_BYTES) return(__p);
-		__result = allcoate(__new_sz);
+		// ã€ä¿®æ­£ã€‘allcoate â†’ allocate
+		__result = allocate(__new_sz);
 		__copy_sz = __new_sz > __old_sz ? __old_sz : __new_sz;
 		memcpy(__result, __p, __copy_sz);
 		deallocate(__p, __old_sz);
-		return(result);
+		// ã€ä¿®æ­£ã€‘result â†’ __result (å˜é‡åç¬”è¯¯)
+		return(__result);
 	}
 
-	//¶ÔÏó¹¹Ôì
+	//å¯¹è±¡æ„é€ 
 	void construct(T* __p, const T& val)
 	{
-		new (__p) T(val);//¶¨Î»newÀ´ÊµÏÖ
+		new (__p) T(val);//å®šä½newæ¥å®ç°
 	}
 
-	//¶ÔÏóÎö¹¹
-	void destory(T* __p)
+	//å¯¹è±¡ææ„  ã€ä¿®æ­£ã€‘destory â†’ destroy
+	void destroy(T* __p)
 	{
 		__p->~T();
 	}
 
 private:
-	enum { _ALIGN = 8 };//×ÔÓÉÁ´±íÊÇ´Ó8×Ö½Ú¿ªÊ¼£¬ÒÔ8×Ö½ÚÎª¶ÔÆä·½Ê½£¬Ö±µ½_MAX_BYTES
-	enum {_MAX_BYTES =128};//ÄÚ´æ³Ø×î´óµÄchunk¿é
-	enum {_NFREELISTS = 16};//×ÔÓÉÁ´±íµÄ¸öÊı
+	enum { _ALIGN = 8 };//è‡ªç”±é“¾è¡¨æ˜¯ä»8å­—èŠ‚å¼€å§‹ï¼Œä»¥8å­—èŠ‚ä¸ºå¯¹å…¶æ–¹å¼ï¼Œç›´åˆ°_MAX_BYTES
+	enum { _MAX_BYTES = 128 };//å†…å­˜æ± æœ€å¤§çš„chunkå—
+	enum { _NFREELISTS = 16 };//è‡ªç”±é“¾è¡¨çš„ä¸ªæ•°
 
-	// Ã¿Ò»¸öchunk¿éµÄÍ·ĞÅÏ¢£¬_M_free_list_link´æ´¢ÏÂÒ»¸öchunk¿éµÄµØÖ·
+	// æ¯ä¸€ä¸ªchunkå—çš„å¤´ä¿¡æ¯ï¼Œ_M_free_list_linkå­˜å‚¨ä¸‹ä¸€ä¸ªchunkå—çš„åœ°å€
 
 	union _Obj {
 		union _Obj* _M_free_list_link;
 		char _M_client_data[1];
 	};
 
-	//ÒÑ·ÖÅäµÄÄÚ´æchunk¿éµÄÊ¹ÓÃÇé¿ö
+	//å·²åˆ†é…çš„å†…å­˜chunkå—çš„ä½¿ç”¨æƒ…å†µ
 	static char* _S_start_free;
 	static char* _S_end_free;
 	static size_t _S_heap_size;
 
 	static _Obj* volatile _S_free_list[_NFREELISTS];
-	//·ÀÖ¹±»Ïß³Ì»º´æ
+	//é˜²æ­¢è¢«çº¿ç¨‹ç¼“å­˜
 
-	static std::mutex mtx;//ÄÚ´æ³Ø»ùÓÚfreelistÊµÏÖ£¬ĞèÒª¿¼ÂÇÏß³Ì°²È«
+	static std::mutex mtx;//å†…å­˜æ± åŸºäºfreelistå®ç°ï¼Œéœ€è¦è€ƒè™‘çº¿ç¨‹å®‰å…¨
 
-	//½«__bytesÉÏµ÷ÖÁ×îÁÚ½üµÄ8µÄ±¶Êı
+	//å°†__bytesä¸Šè°ƒè‡³æœ€é‚»è¿‘çš„8çš„å€æ•°
 	static size_t _S_round_up(size_t __bytes)
 	{
 		return (((__bytes)+(size_t)_ALIGN - 1) & ~((size_t)_ALIGN - 1));
 	}
 
-	//·µ»Ø __bytes ´óĞ¡µÄĞ¡¶îÇø¿éÎ»ÓÚ free-listÖĞµÄ±àºÅ
+	//è¿”å› __bytes å¤§å°çš„å°é¢åŒºå—ä½äº free-listä¸­çš„ç¼–å·
 	static size_t _S_freelist_index(size_t __bytes) {
 		return (((__bytes)+(size_t)_ALIGN - 1) / (size_t)_ALIGN - 1);
 	}
-	//°Ñ·ÖÅäºÃµÄchunk¿é½øĞĞÁ´½Ó
+	//æŠŠåˆ†é…å¥½çš„chunkå—è¿›è¡Œé“¾æ¥
 	static void* _S_refill(size_t __n)
 	{
 		int __nobjs = 20;
 		char* __chunk = _S_chunk_alloc(__n, __nobjs);
-		_Obj* volatile __my_free_list;
+		_Obj* volatile* __my_free_list;
 		_Obj* __result;
 		_Obj* __current_obj;
 		_Obj* __next_obj;
 		int __i;
 
-		if (1 == __nobjs) return (__chunk);//Ö»»ñÈ¡µ½ÁËÒ»¸ö£¬Ö±½Ó·µ»Ø
+		if (1 == __nobjs) return (__chunk);//åªè·å–åˆ°äº†ä¸€ä¸ªï¼Œç›´æ¥è¿”å›
 		__my_free_list = _S_free_list + _S_freelist_index(__n);
 
 		__result = (_Obj*)__chunk;
-		*__my_free_list = __next_obj = (_Obj*)(chunk + __n);
-		
+	
+		*__my_free_list = __next_obj = (_Obj*)(__chunk + __n);
+
 		for (__i = 1;; __i++)
 		{
 			__current_obj = __next_obj;
-			__next_obj = (_obj*)((char*)__next_obj + __n);
-			
+		
+			__next_obj = (_Obj*)((char*)__next_obj + __n);
+
 			if (__nobjs - 1 == __i)
 			{
 				__current_obj->_M_free_list_link = nullptr;
@@ -142,7 +240,7 @@ private:
 
 		return(__result);
 	}
-	//Ö÷Òª·ÖÅä×ÔÓÉÁ´±í£¬chunk¿é
+	//ä¸»è¦åˆ†é…è‡ªç”±é“¾è¡¨ï¼Œchunkå—
 	static char* _S_chunk_alloc(size_t __size, int& __nobjs)
 	{
 		char* __result;
@@ -158,13 +256,15 @@ private:
 			__nobjs = (int)(__bytes_left / __size);
 			__total_bytes = __size * __nobjs;
 			__result = _S_start_free;
+			_S_start_free += __total_bytes;
 			return(__result);
 		}
 		else {
 			size_t __bytes_to_get = 2 * __total_bytes + _S_round_up(_S_heap_size >> 4);
 
 			if (__bytes_left > 0) {
-				_Obj* volatile __my_free_list = _S_free_list + _S_freelist_index(__bytes_left);
+				_Obj* volatile* __my_free_list = _S_free_list + _S_freelist_index(__bytes_left);
+				//è‡ªç”±é“¾è¡¨æœ¬èº«å°±æ˜¯æŒ‡é’ˆï¼Œéœ€è¦ç”¨äºŒçº§æŒ‡é’ˆæŒ‡å‘å®ƒ
 				((_Obj*)_S_start_free)->_M_free_list_link = *__my_free_list;
 				*__my_free_list = (_Obj*)_S_start_free;
 			}
@@ -201,8 +301,11 @@ template<typename T>
 char* myallcoator<T>::_S_end_free = nullptr;
 template<typename T>
 size_t myallcoator<T>::_S_heap_size = 0;
-//ÀàÍâ³õÊ¼»¯ÄÚ´æchunk¿éµÄÊ¹ÓÃÇé¿ö
+//ç±»å¤–åˆå§‹åŒ–å†…å­˜chunkå—çš„ä½¿ç”¨æƒ…å†µ
 
 template<typename T>
-_Obj* volatile myallcoator<T>::_S_free_list[_NFREELISTS] = 
-{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+std::mutex myallcoator<T>::mtx;
+
+template<typename T>
+typename myallcoator<T>::_Obj* volatile myallcoator<T>::_S_free_list[myallcoator<T>::_NFREELISTS] =
+{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr };
