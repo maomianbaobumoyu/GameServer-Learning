@@ -101,7 +101,7 @@ spdlog::stdout_color_st(std::string const&logger_name)
 
 ```c++
 //工厂函数(区分mt/st)
-basic_logger_mt(std::string const&logger_name,std::string const&filename,bool truncate=false);//logger名，文件日志名，truncate为ture追加内容/false覆盖重写
+basic_logger_mt(std::string const&logger_name,std::string const&filename,bool truncate=false);//logger名，文件日志名，truncate为true覆盖重写/false追加内容
 basic_logger_st(...)
 ```
 
