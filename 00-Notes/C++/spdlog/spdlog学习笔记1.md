@@ -221,3 +221,147 @@ void func4()
 [2026-05-21 04:32:47.421] [critical] 4.critical
 ```
 
+##### 如何划分logger？
+
+可以根据线程划分，每一个工作线程使用一个独立的日志记录器，可以使用_st单线程版本的记录器且性能更高。
+
+但不是每个多线程都可以这样做，至少需要满足几个特征：进程里面的线程是固定的；程序完成的某一业务，从开始到结束都在使用同一个线程。
+
+可以根据业务划分，把主业务全部都写到一个程序里，可以使用默认的全局日志记录器记录主业务，其他的业务各自分配一个独立的日志记录器，但实际使用时这些业务会被拆分成多个程序，各自记录日志。
+
+可以按照层次划分，每一层日志记录可以用独立的日志记录器，但这是在横向，依赖与支撑关系的层次。
+
+当同一业务跨进程，跨主机实现，应采用相同的日志记录策略，通过后台脚本实现合并。
+
+##### 业务场景实例
+
+|      记录器类型      |           挂接的 Sink（输出槽）组合            |
+| :------------------: | :--------------------------------------------: |
+| 默认（主业务）记录器 |       带颜色的控制台槽 + 序号回滚文件槽        |
+|    监控业务记录器    | 普通控制台槽 + 单一文件槽 + Windows 系统事件槽 |
+
+------
+
+##### 核心要点（3 条关键规则）
+
+1. Sink 必须用智能指针管理
+
+   所有日志槽（sink）都需创建为 std::shared_ptr< sink >  类型，推荐用 std::make_shared<>() 直接创建，避免手动内存管理的问题。
+
+2. Logger 支持多 Sink 动态管理
+
+   每个记录器（logger）内部维护一个 std::vector< std::shared_ptr< sink > > 数组，支持：
+
+   - `push_back()`：添加新的输出槽
+   - `clear()`：清空所有已有输出槽
+
+3. Windows 系统事件日志需手动创建 Sink
+
+   spdlog 没有提供 Windows 系统事件日志的工厂函数，需先手动创建 
+
+   win_eventlog_sink_mt/st  实例，再将其加入目标 logger 中。
+
+------
+
+##### 常用 Sink 创建方式（含头文件 + 示例）
+
+###### 头文件引入
+
+```c++
+#include <spdlog/sinks/stdout_color_sinks.h>   // 带颜色控制台输出
+#include <spdlog/sinks/stdout_sinks.h>           // 普通控制台输出
+#include <spdlog/sinks/basic_file_sink.h>        // 单一文件日志输出
+#include <spdlog/sinks/rotating_file_sink.h>     // 按大小回滚文件日志
+#include <spdlog/sinks/win_eventlog_sink.h>      // Windows 系统事件日志
+```
+
+###### 示例代码
+
+```c++
+// 1. 带颜色的控制台输出槽
+auto colorOutSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+
+// 2. 普通控制台输出槽
+auto outSink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
+
+// 3. 单一文件日志输出槽（固定路径）
+auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("log/monitor.txt");
+
+// 4. 按大小回滚文件日志槽（参数：日志路径、单文件最大大小、保留文件数量）
+auto rotatingFileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+    "log/main-rotating.txt", 
+    1024*1024*5,  // 单文件最大 5MB
+    9             // 最多保留 9 个历史文件
+);
+
+// 5. Windows 系统事件日志槽（仅 Windows 平台有效）
+auto winEvtSink = std::make_shared<spdlog::sinks::win_eventlog_sink_mt>(
+    "HelloSpdlog",  // 事件查看器中显示的“来源”字段
+    1000           // 自定义事件 ID
+);
+```
+
+------
+
+###### Windows 平台特殊说明
+
+- 若需要向 Windows 系统事件日志发送中文内容，需在项目中添加宏定义：
+
+  ```c++
+  #define SPDLOG_WCHAR_TO_UTF8_SUPPORT
+  ```
+
+- 该宏仅对 `win_eventlog_sink` 生效，Linux/UNIX 环境无需配置。
+
+```c++
+//多记录
+void func5()
+{
+   spdlog::info("全局日志记录器将新增回滚编号文件槽");
+
+   //1.全局日志记录器 - 颜色控制台 + 回滚编号文件槽
+   auto rotatingFileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>("log/main-rotating.txt",1024*1024*5,9);
+   //取默认记录器
+   auto defaultLogger = spdlog::default_logger();
+   defaultLogger->sinks().push_back(rotatingFileSink);//加入新槽
+
+   spdlog::info("全局日志记录器已经添加回滚编号文件槽");
+
+   //2.专用于监控业务的日志记录器
+   auto colornessOutSink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
+
+   //创建普通文件槽
+   auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("log/monitor.txt");
+
+   #ifdef _WIN32
+   //创建windowsOS的时间记录槽
+   auto winEvtSink=std::make_shared<spdlog::sinks::win_eventlog_sink_mt>("HelloSpdlog");
+   #endif
+  
+   //创建一个全新的日志记录器
+   auto monitorLogger = std::make_shared<spdlog::logger>("MonitorLogger");
+   monitorLogger->sinks().push_back(colornessOutSink);
+   monitorLogger->sinks().push_back(fileSink);
+
+   #ifdef _WIN32
+    monitorLogger->sinks().push_back(winEvtSink);
+   #endif
+
+   monitorLogger->info("监控日志有{}个槽",monitorLogger->sinks().size());
+
+}
+```
+
+因为我是LInux环境，所以只会显示出两个槽
+
+![img](../../images/2026-05-21225234.png)
+
+```c++
+//monitor.txt文件中
+[2026-05-21 07:25:28.355] [MonitorLogger] [info] 监控日志有2个槽
+
+//main-rotating.txt文件中
+[2026-05-21 07:25:28.355] [info] 全局日志记录器已经添加回滚编号文件槽
+
+```
+
