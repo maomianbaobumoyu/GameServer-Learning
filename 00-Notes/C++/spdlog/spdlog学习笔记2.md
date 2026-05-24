@@ -187,8 +187,112 @@ void func7()
 
 ### 异步记录器
 
-同步：
+##### 同步：
 
   1、同步≠立即写入：虽是同步模式，在目标有缓冲区，且数据未灌满缓冲区时，日志并未 “落袋为安”，仍有可能丢失；
 
   2、正事要等候：同步模式下，必须等写日志完事后，才继续干正事。
+
+由于缓冲区的存在，同步日志输出的性能其实可以支撑大多数业务系统的日志记录压力的需求。
+
+如果当前日志比较重要可以使用flush()来强制输出当前缓冲区的日志。
+
+或者使用spdlog::flush_every(时长)，来定期强制输出。(后台定时刷新功能，它内部会创建线程)
+
+```c++
+//flush缓冲区
+void func8()
+{
+   auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("log/flush.txt");
+   spdlog::default_logger()->sinks().push_back(fileSink);
+   spdlog::info("写入日志，对比屏幕输出flush.txt内容");
+    
+   spdlog::default_logger()->flush();
+   spdlog::info("已经强制刷新日志缓冲区");
+}
+```
+
+![img](../../images/2026-05-24202201.png)
+
+```c++
+//flush_every缓冲区
+void func9()
+{
+    //每三秒强制清空一次
+    spdlog::flush_every(std::chrono::seconds(3));
+   auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("log/flush_every.txt");
+   spdlog::default_logger()->sinks().push_back(fileSink);
+   spdlog::info("写入日志，对比屏幕输出flush_every.txt内容，并等待3秒");
+   spdlog::info("写入日志，对比屏幕输出flush_every.txt内容，并等待2秒");
+   spdlog::info("写入日志，对比屏幕输出flush_every.txt内容，并等待1秒");
+
+}
+```
+
+![image-20260524202748163](C:\Users\不二家sir\AppData\Roaming\Typora\typora-user-images\image-20260524202748163.png)
+
+##### 异步：
+
+异步记录器的机制是主线程将写日志的工作交给工作线程来完成，日志任务会暂存在内部的队列中，工作线程可以有多个。可以设置线程个数，任务上限，超出任务上限的处理方式。
+
+```c++
+#include <spdlog/async.h>
+
+// step 1: 初始化异步后台线程: 队列大小、后台线程数
+spdlog::init_thread_pool(8192, 1);
+ //异步日志任务队列上限（8K 条），后台处理线程数（范围 1~1000）
+// step 2: 定制异步记录器工厂类型，指定“任务积压超标”的处理策略
+using factory = spdlog::async_factory_impl<spdlog::async_overflow_policy::block>;
+
+// step 3: 使用工厂类型，创建你所需要日志记录器
+auto asyncColorLogger = spdlog::stdout_color_mt<factory>("惟一名称");
+```
+
+任务积压超标的处理策略
+
+|       策略       |                   行为说明                   | 常用程度 |
+| :--------------: | :------------------------------------------: | :------: |
+|     `block`      | 死等，直到队列任务下降，期间会卡住调用者业务 |   常用   |
+|  `discard_new`   |            直接丢掉当前最新的日志            | 相对少用 |
+| `overrun_oldest` |       保留新日志，丢弃队列中最旧的一条       | 相对多用 |
+
+- `async_factory`：对应 `block` 策略，默认即可使用（`step 2` 可省略）
+- `async_factory_nonblock`：对应 `overrun_oldest` 策略
+
+```c++
+//异步日志记录器
+void func10()
+{
+   spdlog::init_thread_pool(1000,1);
+   //为异步日志记录器的工厂类型，取简短的别名
+   //using async_factory = spdlog::async_factory_impl<spdlog::async_overflow_policy::block>;
+   //using async_factory_nb = spdlog::async_factory_impl<spdlog::async_overflow_policy::overrun_oldest>;
+   //创建带颜色的控制台日志记录器 使用指定异步工厂
+   auto asyncColorLogger = spdlog::stdout_color_mt<spdlog::async_factory>("AsyncLogger");//async_factory_nonblock
+
+   //创建文件
+   auto fileSink = std::make_shared<spdlog::sinks::basic_file_sink_mt>("log/async_file.txt");
+   asyncColorLogger->sinks().push_back(fileSink);
+
+   spdlog::set_default_logger(asyncColorLogger);
+   spdlog::info("异步记录器，它有{}个槽",spdlog::default_logger()->sinks().size());
+
+}
+
+//asyncfile.txt内容
+[2026-05-21 14:11:16.053] [AsyncLogger] [info] 异步记录器，它有2个槽
+```
+
+![img](../../images/2026-05-204836.png)
+
+**相比同步，异步记录的短处？**
+
+① 日志记录的延迟更大；（更长的路径，包括线程切换）；
+
+② 如发生程序意外退出，丢失的日志可能更多（队列 + 系统缓冲区）；
+
+③ 占用更多内存（队列中积压的日志）；
+
+④ 更复杂的参数调节（三个关键参数 + 运行环境配置 + 业务负载数据）
+
+**长处：** 大压力下，对业务线程（日志生产者）的负面影响，可降低一个数量级（10 倍）。
