@@ -126,6 +126,51 @@ WebServer::WebServer(int port, int trigMode, int timeoutMS, bool OptLinger,
 }
 ```
 
+一般情况下，不推荐指针new，而是使用make_unique(但C++14才有)。
+
+先看**危险写法**（普通函数内，非初始化列表）：
+
+```c++
+// 危险！存在内存泄漏风险
+void Func() {
+    // 步骤1：new HeapTimer 分配内存
+    // 步骤2：构造 HeapTimer 对象
+    // 步骤3：unique_ptr 接管指针
+    std::unique_ptr<HeapTimer> timer(new HeapTimer()); 
+}
+```
+
+如果 `new HeapTimer()` 构造时**抛出异常**：
+
+- 内存已经分配
+- 但 `unique_ptr` 还没来得及接管
+- **内存直接泄漏！**
+
+这就是经典的 **`new` 和 `unique_ptr` 赋值之间的间隙风险**
+
+
+
+**为什么这个 WebServer 代码里这么写是安全的**
+
+因为它写在了 **【构造函数成员初始化列表】** 中
+
+```c++
+WebServer::WebServer(...) :
+    // 成员初始化列表！！！
+    timer_(new HeapTimer()), 
+    threadpool_(new ThreadPool(threadNum)), 
+    epoller_(new Epoller())
+{}
+```
+
+###### 成员初始化列表的特性：
+
+1. **初始化是原子性的**：`new` 完成 → **立刻**交给 `unique_ptr` 接管，**没有间隙**
+2. **异常安全**：如果后面的成员构造抛异常，**前面已经初始化的智能指针会自动释放内存**
+3. 这是 C++11 里**唯一能安全用 `new` 初始化 `unique_ptr` 成员**的场景
+
+----
+
 析构函数
 
 ```c++
