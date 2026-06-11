@@ -27,7 +27,7 @@
     std::atomic<std::size_t> writePos_;//写指针 对vector的写 
 ```
 
-用vector容器存储char字符，这里读写指针被当作索引，指向vector中正确的位置。
+用vector容器存储char字符，自动扩容与内存复用，无需手动管理。这里读写指针使用原子操作保证**读写指针本身**的线程安全，被当作索引，指向vector中正确的位置。
 
 ---
 
@@ -1014,3 +1014,352 @@ ssize_t Buffer::WriteFd(int fd, int* saveErrno) {
 ```
 
 这是写函数，这里不需要像readv一样分散到多个容器里。通过write直接一块发送过去，如果发送失败(比如对端的接收缓存区满了)，会设置errno，并返回写入的len长度。发送成功则及时更新读指针。
+
+### 完整源码
+
+```c++
+#include "buffer.h"
+
+//初始化缓冲区大小
+Buffer::Buffer(int initBuffSize) : buffer_(initBuffSize), readPos_(0), writePos_(0) {}
+
+// ==================== 容量查询 ====================
+
+/**
+ * @brief 获取可写区域大小
+ *
+ * 可写区域 = 缓冲区总大小 - 写指针位置
+ *
+ * @return size_t 可写字节数
+ */
+size_t Buffer::WritableBytes() const
+{
+    return buffer_.size() - writePos_;
+}
+
+/**
+ * @brief 获取可读区域大小
+ *
+ * 可读区域 = 写指针位置 - 读指针位置
+ *
+ * @return size_t 可读字节数
+ */
+size_t Buffer::ReadableBytes() const
+{
+    return writePos_ - readPos_;
+}
+
+/**
+ * @brief 获取已读取区域大小（前置区域）
+ *
+ * 前置区域 = 读指针位置
+ * 可用于添加前缀数据
+ *
+ * @return size_t 前置字节数
+ */
+size_t Buffer::PrependableBytes() const
+{
+    return readPos_;
+}
+
+// ==================== 读写指针 ====================
+
+/**
+ * @brief 获取可读区域起始指针
+ *
+ * @return const char* 可读区域指针
+ */
+const char *Buffer::Peek() const
+{
+    return BeginPtr_() + readPos_;
+}
+
+/**
+ * @brief 消费（读取）数据
+ *
+ * 移动读指针，标记数据已消费
+ *
+ * @param len 消费的字节数
+ */
+void Buffer::Retrieve(size_t len)
+{
+    assert(len <= ReadableBytes());
+    readPos_ += len;
+}
+
+/**
+ * @brief 消费数据直到指定位置
+ *
+ * @param end 结束位置指针
+ */
+void Buffer::RetrieveUntil(const char *end)
+{
+    assert(Peek() <= end);
+    Retrieve(end - Peek());
+}
+
+/**
+ * @brief 清空缓冲区
+ *
+ * 重置读写指针，清空数据
+ */
+void Buffer::RetrieveAll()
+{
+    //清空vector
+    bzero(&buffer_[0], buffer_.size());
+    readPos_ = 0;
+    writePos_ = 0;
+}
+
+/**
+ * @brief 消费所有数据并返回字符串
+ *
+ * @return std::string 可读区域的数据
+ */
+std::string Buffer::RetrieveAllToStr()
+{
+    //生成一个独立的、深拷贝的 std::string 对象
+    std::string str(Peek(), ReadableBytes());
+    RetrieveAll();
+    return str;
+}
+
+/**
+ * @brief 获取可写区域起始指针（const 版本）
+ *
+ * @return const char* 可写区域指针
+ */
+const char *Buffer::BeginWriteConst() const
+{
+    return BeginPtr_() + writePos_;
+}
+
+/**
+ * @brief 获取可写区域起始指针
+ *
+ * @return char* 可写区域指针
+ */
+char *Buffer::BeginWrite()
+{
+    return BeginPtr_() + writePos_;
+}
+
+/**
+ * @brief 标记已写入数据
+ *
+ * 在直接写入数据后调用，更新写指针
+ *
+ * @param len 已写入的字节数
+ */
+void Buffer::HasWritten(size_t len)
+{
+    writePos_ += len;
+}
+
+// ==================== 数据追加 ====================
+
+/**
+ * @brief 追加字符串数据
+ *
+ * @param str 要追加的字符串
+ */
+void Buffer::Append(const std::string &str)
+{
+    //调用另一个Append,传入str(c风格)和长度
+    Append(str.data(), str.length());
+}
+
+/**
+ * @brief 追加任意数据
+ *
+ * @param data 要追加的数据指针
+ * @param len 数据长度
+ */
+void Buffer::Append(const void *data, size_t len)
+{
+    assert(data);
+    //显式转换成const char*
+    Append(static_cast<const char *>(data), len);
+}
+
+/**
+ * @brief 追加 C 字符串数据
+ *
+ * 确保可写区域足够大，然后复制数据
+ *
+ * @param str 要追加的 C 字符串
+ * @param len 字符串长度
+ */
+void Buffer::Append(const char *str, size_t len)
+{
+    assert(str);
+    //确保能写的下，不够就扩容
+    EnsureWriteable(len);
+    std::copy(str, str + len, BeginWrite());
+    HasWritten(len); //更新写入字节
+}
+
+/**
+ * @brief 追加另一个缓冲区的数据
+ *
+ * @param buff 要追加的缓冲区
+ */
+void Buffer::Append(const Buffer &buff)
+{
+    Append(buff.Peek(), buff.ReadableBytes());
+}
+
+/**
+ * @brief 确保可写区域足够大
+ *
+ * 如果空间不足，自动扩容
+ *
+ * @param len 需要的字节数
+ */
+void Buffer::EnsureWriteable(size_t len)
+{
+    if (WritableBytes() < len)
+    {
+        MakeSpace_(len);
+    }
+    assert(WritableBytes() >= len);
+}
+
+// ==================== 文件 IO ====================
+
+/**
+ * @brief 从文件描述符读取数据
+ *
+ * 使用 readv 分散读：
+ * - 优先读取到 Buffer 的 writable 区域
+ * - 如果 Buffer 空间不足，额外读取到栈上的临时数组
+ *
+ * 为什么使用 readv？
+ * - 减少系统调用次数
+ * - 确保数据完整读取（避免缓冲区空间不足导致数据丢失）
+ *
+ * @param fd 文件描述符
+ * @param saveErrno 保存 errno 值
+ * @return ssize_t 读取的字节数，-1 表示错误
+ */
+ssize_t Buffer::ReadFd(int fd, int *saveErrno)
+{
+    char buffer[65535];                      //栈上64kb临时数组，用于分散读
+    struct iovec iov[2];                     // 分散读的内存块数组，最多2个
+    const size_t writable = WritableBytes(); // 获取Buffer当前的可写空间大小
+
+    //分散读，保证数据都读完
+    /* 第一个块：Buffer本身的可写区域（优先写这里） */
+    iov[0].iov_base = BeginPtr_() + writePos_; // 指向可写区域的起始地址
+    iov[0].iov_len = writable;                 //可写区域大小
+
+    /* 第二个块：栈上临时数组（主容器满了就写这里） */
+
+    iov[1].iov_base = buffer;        //指向栈上临时数组
+    iov[1].iov_len = sizeof(buffer); //临沭数组大小64kb
+
+    //使用readv一次性读取所有数据
+    const ssize_t len = readv(fd, iov, 2); //从fd读数据，分散读到iov的两个块里
+
+    //处理返回结果
+    if (len < 0)
+    {
+        //读出错，保存错误码
+        *saveErrno = errno;
+    }
+    else if (static_cast<size_t>(len) <= writable)
+    {
+        //当前数据量<=Buffer可写空间，全部读到了Buffer里
+        writePos_ += len; //直接更新写指针就行
+    }
+    else
+    {
+        //数据量>Buffer可写空间，剩下的数据读到了栈上数组
+        writePos_ = buffer_.size();     //先把Buffer的写指针移到末尾(vector的Buffer已经存满了)
+        Append(buffer, len - writable); //把栈上数组的剩余数据Append到Buffer(自动扩容)
+    }
+
+    return len; //返回总共读取的字节数
+}
+
+/**
+ * @brief 向文件描述符写入数据
+ *
+ * @param fd 文件描述符
+ * @param saveErrno 保存 errno 值
+ * @return ssize_t 写入的字节数，-1 表示错误
+ */
+ssize_t Buffer::WriteFd(int fd, int *saveErrno)
+{
+    size_t readSize = ReadableBytes(); //获取可读区域大小
+    ssize_t len = write(fd, Peek(), readSize);
+    if (len < 0)
+    {
+        *saveErrno = errno; //保存错误码
+        return len;
+    }
+    //更新读指针，标记已发送的数据
+    readPos_ += len;
+    //返回实际发送的字节数
+    return len;
+}
+
+// ==================== 辅助函数 ====================
+
+/**
+ * @brief 获取缓冲区起始指针
+ *
+ * @return char* 缓冲区指针
+ */
+char *Buffer::BeginPtr_()
+{
+    return &*buffer_.begin();
+    //等价与buffer_.data();
+}
+
+/**
+ * @brief 获取缓冲区起始指针（const 版本）
+ *
+ * @return const char* 缓冲区指针
+ */
+const char *Buffer::BeginPtr_() const
+{
+    return &*buffer_.begin();
+}
+
+/**
+ * @brief 扩容缓冲区
+ *
+ * 扩容策略：
+ * 1. 如果前置区域 + 可写区域 >= 需要的空间：
+ *    - 移动数据到缓冲区开头
+    - 重置读写指针
+ * 2. 否则：
+ *    - 重新分配更大的缓冲区
+ *
+ * @param len 需要的字节数
+ */
+void Buffer::MakeSpace_(size_t len)
+{
+    // 1. 判断：总空闲空间(头部+尾部) 是否足够写入 len 字节？
+    if (WritableBytes() + PrependableBytes() < len)
+    {
+        // 情况A：总空间都不够 → **必须重新扩容vector**
+        buffer_.resize(writePos_ + len + 1);
+        //+1预留一个字节的安全余量，防止边界问题
+    }
+    else
+    {
+        // 情况B：总空间够 → **内存紧缩**，把有效数据挪到开头，合并空闲空间
+        size_t readable = ReadableBytes();
+        // 把【中间的有效数据】复制到【缓冲区开头】
+        std::copy(BeginPtr_() + readPos_, BeginPtr_() + writePos_, BeginPtr_());
+        // 重置读写指针
+        readPos_ = 0;
+         // 写指针移到有效数据末尾
+        writePos_ = readable;
+    }
+}
+
+```
+
